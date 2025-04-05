@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>Pose Detection Mobile</title>
+  <title>Pose Detection</title>
   <style>
     html, body {
       margin: 0;
@@ -12,16 +12,17 @@
       background: black;
       color: white;
       font-family: sans-serif;
-      text-align: center;
     }
-    canvas {
+    canvas, video {
       position: absolute;
       top: 0; left: 0;
       width: 100vw;
       height: 100vh;
+      object-fit: cover;
     }
     #startBtn {
       position: absolute;
+      z-index: 10;
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
@@ -39,65 +40,55 @@
 </head>
 <body>
   <button id="startBtn">開始偵測</button>
-  <video id="video" autoplay playsinline style="display: none;"></video>
+  <video id="video" autoplay playsinline muted></video>
   <canvas id="canvas"></canvas>
 
   <script>
+    const startBtn = document.getElementById("startBtn");
     const video = document.getElementById("video");
     const canvas = document.getElementById("canvas");
     const ctx = canvas.getContext("2d");
-    const startBtn = document.getElementById("startBtn");
 
     let detector;
     let lastTime = 0;
-    const minInterval = 100; // 每秒最多10次
+    const minInterval = 100;
 
     async function setupCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: "user",
-            width: { ideal: 640 },
-            height: { ideal: 480 }
-          },
+          video: { facingMode: "user" },
           audio: false
         });
         video.srcObject = stream;
         return new Promise((resolve) => {
-          video.onloadedmetadata = () => {
-            console.log("video metadata loaded");
-            resolve(video);
-          };
+          video.onloadedmetadata = () => resolve(video);
         });
-      } catch (e) {
-        alert("無法存取相機：" + e.message);
-        throw e;
+      } catch (err) {
+        alert("無法開啟相機：" + err.message);
       }
     }
 
     async function main() {
+      startBtn.style.display = "none";
+
       await tf.setBackend('webgl');
       await tf.ready();
 
       await setupCamera();
       await video.play();
-      console.log("video 播放中？", video.readyState, video.videoWidth, video.videoHeight);
-
-      // 確保 video 尺寸有正確取得
-      if (video.videoWidth > 0 && video.videoHeight > 0) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-      } else {
-        canvas.width = 640;
-        canvas.height = 480;
-      }
 
       detector = await poseDetection.createDetector(
         poseDetection.SupportedModels.MoveNet,
         { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
       );
 
+      resizeCanvas();
       requestAnimationFrame(detect);
+    }
+
+    function resizeCanvas() {
+      canvas.width = video.videoWidth || 640;
+      canvas.height = video.videoHeight || 480;
     }
 
     async function detect(now) {
@@ -105,19 +96,12 @@
       if (now - lastTime < minInterval) return;
       lastTime = now;
 
-      if (video.readyState < 2) {
-        console.warn("video 尚未準備好繪製");
-        return;
-      }
-
       const poses = await detector.estimatePoses(video);
-
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
       if (poses.length > 0) {
-        const keypoints = poses[0].keypoints;
-        keypoints.forEach((kp) => {
+        poses[0].keypoints.forEach(kp => {
           if (kp.score > 0.4) {
             ctx.beginPath();
             ctx.arc(kp.x, kp.y, 6, 0, 2 * Math.PI);
@@ -128,14 +112,7 @@
       }
     }
 
-    startBtn.addEventListener("click", async () => {
-      startBtn.style.display = "none";
-      try {
-        await main();
-      } catch (err) {
-        alert("初始化失敗：" + err.message);
-      }
-    });
+    startBtn.addEventListener("click", main);
   </script>
 </body>
 </html>
