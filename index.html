@@ -16,11 +16,9 @@
     }
     canvas {
       position: absolute;
-      top: 0;
-      left: 0;
+      top: 0; left: 0;
       width: 100vw;
       height: 100vh;
-      pointer-events: none; /* 重要：避免擋到按鈕 */
     }
     #startBtn {
       position: absolute;
@@ -33,9 +31,7 @@
       color: white;
       border: none;
       border-radius: 12px;
-      z-index: 10; /* 重要：放最上面 */
       cursor: pointer;
-      pointer-events: auto;
     }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.16.0/dist/tf.min.js"></script>
@@ -43,7 +39,7 @@
 </head>
 <body>
   <button id="startBtn">開始偵測</button>
-  <video id="video" autoplay playsinline muted style="display: none;"></video>
+  <video id="video" autoplay playsinline style="display: none;"></video>
   <canvas id="canvas"></canvas>
 
   <script>
@@ -54,28 +50,65 @@
 
     let detector;
     let lastTime = 0;
-    const minInterval = 100;
+    const minInterval = 100; // 每秒最多10次
 
     async function setupCamera() {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: "user",
-          width: { ideal: 640 },
-          height: { ideal: 480 }
-        },
-        audio: false
-      });
-      video.srcObject = stream;
-      return new Promise((resolve) => {
-        video.onloadedmetadata = () => resolve();
-      });
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: "user",
+            width: { ideal: 640 },
+            height: { ideal: 480 }
+          },
+          audio: false
+        });
+        video.srcObject = stream;
+        return new Promise((resolve) => {
+          video.onloadedmetadata = () => {
+            console.log("video metadata loaded");
+            resolve(video);
+          };
+        });
+      } catch (e) {
+        alert("無法存取相機：" + e.message);
+        throw e;
+      }
+    }
+
+    async function main() {
+      await tf.setBackend('webgl');
+      await tf.ready();
+
+      await setupCamera();
+      await video.play();
+      console.log("video 播放中？", video.readyState, video.videoWidth, video.videoHeight);
+
+      // 確保 video 尺寸有正確取得
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+      } else {
+        canvas.width = 640;
+        canvas.height = 480;
+      }
+
+      detector = await poseDetection.createDetector(
+        poseDetection.SupportedModels.MoveNet,
+        { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
+      );
+
+      requestAnimationFrame(detect);
     }
 
     async function detect(now) {
       requestAnimationFrame(detect);
-      if (!detector || !video.readyState === 4) return;
       if (now - lastTime < minInterval) return;
       lastTime = now;
+
+      if (video.readyState < 2) {
+        console.warn("video 尚未準備好繪製");
+        return;
+      }
 
       const poses = await detector.estimatePoses(video);
 
@@ -83,39 +116,24 @@
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
       if (poses.length > 0) {
-        for (const kp of poses[0].keypoints) {
+        const keypoints = poses[0].keypoints;
+        keypoints.forEach((kp) => {
           if (kp.score > 0.4) {
             ctx.beginPath();
             ctx.arc(kp.x, kp.y, 6, 0, 2 * Math.PI);
             ctx.fillStyle = "red";
             ctx.fill();
           }
-        }
+        });
       }
     }
 
     startBtn.addEventListener("click", async () => {
       startBtn.style.display = "none";
-
       try {
-        await tf.setBackend('webgl');
-        await tf.ready();
-
-        await setupCamera();
-        await video.play();
-
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-
-        detector = await poseDetection.createDetector(
-          poseDetection.SupportedModels.MoveNet,
-          { modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING }
-        );
-
-        requestAnimationFrame(detect);
+        await main();
       } catch (err) {
-        alert("啟動相機失敗：" + err.message);
-        console.error(err);
+        alert("初始化失敗：" + err.message);
       }
     });
   </script>
